@@ -1,0 +1,33 @@
+# Build systems and heavy caches
+orangepi-build/
+output/
+*.img
+*.img.xz
+*.bin
+*.deb
+*.iso
+
+# Third-party datasheets / schematics (local reference only)
+docs/
+*.pdf
+*.txt
+
+# CLion & IDEs
+.idea/
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+*.o
+*.a
+*.so
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+*~
+.DS_Store
+
+# Local environment overrides (use .env.example as template)
+.env
+.env.local

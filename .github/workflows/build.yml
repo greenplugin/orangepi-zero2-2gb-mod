@@ -1,0 +1,108 @@
+name: Build Orange Pi Zero 2 (2GB RAM)
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Build target'
+        required: true
+        default: 'uboot'
+        type: choice
+        options:
+          - uboot
+          - image
+          - all
+      username:
+        description: 'Default user name'
+        required: false
+        default: 'ubuntu'
+      password:
+        description: 'Default user password'
+        required: false
+        default: 'ubuntu'
+
+jobs:
+  build-uboot:
+    name: Build U-Boot & SPL (2GB RAM)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker builder image
+        run: |
+          docker build -t orangepi-builder:latest -f docker/Dockerfile .
+
+      - name: Compile U-Boot & SPL
+        run: |
+          chmod +x scripts/*.sh
+          ./scripts/build_uboot.sh
+
+      - name: Check binary output
+        run: |
+          ls -lh u-boot-sunxi-with-spl.bin
+          sha256sum u-boot-sunxi-with-spl.bin
+
+      - name: Upload U-Boot Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: u-boot-sunxi-with-spl-2gb
+          path: u-boot-sunxi-with-spl.bin
+          if-no-files-found: error
+
+  build-image:
+    name: Build Full OS Image (Ubuntu 22.04 + Linux 6.1)
+    runs-on: ubuntu-22.04
+    if: "${{ github.event_name == 'workflow_dispatch' && (inputs.target == 'image' || inputs.target == 'all') }}"
+    steps:
+      - name: Free disk space on runner
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+          df -h
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up environment
+        run: |
+          chmod +x scripts/*.sh
+          if [ -n "${{ inputs.username }}" ]; then
+            echo "DEFAULT_USERNAME=${{ inputs.username }}" >> .env
+            echo "DEFAULT_PASSWORD=${{ inputs.password }}" >> .env
+            echo "ROOT_PASSWORD=${{ inputs.password }}" >> .env
+          fi
+
+      - name: Build Docker builder image
+        run: |
+          docker build -t orangepi-builder:latest -f docker/Dockerfile .
+
+      - name: Build Full OS Image
+        run: |
+          ./scripts/build_image.sh
+
+      - name: Compress image for release
+        run: |
+          IMG_PATH=$(find orangepi-build/output/images/ -name "*.img" | head -n 1)
+          echo "Compressing ${IMG_PATH} with xz (multi-threaded)..."
+          xz -T0 -v -1 "${IMG_PATH}"
+          ls -lh orangepi-build/output/images/
+
+      - name: Upload OS Image Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: orangepizero2-2gb-ubuntu-jammy-linux6.1
+          path: orangepi-build/output/images/*.img.xz
+          if-no-files-found: error

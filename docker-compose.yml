@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  builder:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: orangepi-builder:latest
+    container_name: orangepi-zero2-builder
+    privileged: true
+    stdin_open: true
+    tty: true
+    network_mode: "host"
+    environment:
+      - LANG=en_US.UTF-8
+      - LC_ALL=en_US.UTF-8
+      - DEBIAN_FRONTEND=noninteractive
+    volumes:
+      - .:/workspace
+      - /dev:/dev
+      - orangepi-cache:/workspace/orangepi-build/cache
+      - orangepi-ccache:/root/.ccache
+    working_dir: /workspace/orangepi-build
+    command: ["/bin/bash"]
+
+volumes:
+  orangepi-cache:
+    name: orangepi-zero2-cache
+  orangepi-ccache:
+    name: orangepi-zero2-ccache

@@ -1,0 +1,166 @@
+diff --git a/arch/arm/mach-sunxi/dram_helpers.c b/arch/arm/mach-sunxi/dram_helpers.c
+index 520b597f..7d83069d 100644
+--- a/arch/arm/mach-sunxi/dram_helpers.c
++++ b/arch/arm/mach-sunxi/dram_helpers.c
+@@ -30,9 +30,10 @@ void mctl_await_completion(u32 *reg, u32 mask, u32 val)
+ bool mctl_mem_matches(u32 offset)
+ {
+ 	/* Try to write different values to RAM at two addresses */
+-	writel(0, CONFIG_SYS_SDRAM_BASE);
++	writel(0x55aa55aa, CONFIG_SYS_SDRAM_BASE);
+ 	writel(0xaa55aa55, (ulong)CONFIG_SYS_SDRAM_BASE + offset);
+ 	dsb();
++	isb();
+ 	/* Check if the same value is actually observed when reading back */
+ 	return readl(CONFIG_SYS_SDRAM_BASE) ==
+ 	       readl((ulong)CONFIG_SYS_SDRAM_BASE + offset);
+diff --git a/arch/arm/mach-sunxi/dram_sun50i_h616.c b/arch/arm/mach-sunxi/dram_sun50i_h616.c
+index acdfb3ce..32b9245e 100644
+--- a/arch/arm/mach-sunxi/dram_sun50i_h616.c
++++ b/arch/arm/mach-sunxi/dram_sun50i_h616.c
+@@ -360,7 +360,7 @@ static bool mctl_phy_read_calibration(struct dram_para *para)
+ 			}
+ 		}
+ 
+-		setbits_le32(SUNXI_DRAM_PHY0_BASE + 8, 1);
++		clrbits_le32(SUNXI_DRAM_PHY0_BASE + 8, 1);
+ 	}
+ 
+ 	clrbits_le32(SUNXI_DRAM_PHY0_BASE + 8, 0x30);
+@@ -447,8 +447,7 @@ static bool mctl_phy_read_training(struct dram_para *para)
+ 	clrbits_le32(SUNXI_DRAM_PHY0_BASE + 0x190, 3);
+ 
+ 	if (para->ranks == 2) {
+-		/* maybe last parameter should be 1? */
+-		clrsetbits_le32(SUNXI_DRAM_PHY0_BASE + 0x198, 3, 2);
++		clrsetbits_le32(SUNXI_DRAM_PHY0_BASE + 0x198, 3, 1);
+ 
+ 		setbits_le32(SUNXI_DRAM_PHY0_BASE + 0x190, 6);
+ 		setbits_le32(SUNXI_DRAM_PHY0_BASE + 0x190, 1);
+@@ -792,7 +791,7 @@ static bool mctl_phy_init(struct dram_para *para)
+ 			if (mctl_phy_write_leveling(para))
+ 				break;
+ 		if (i == 5) {
+-			debug("write leveling failed!\n");
++			printf("DRAM: write leveling failed!\n");
+ 			return false;
+ 		}
+ 	}
+@@ -802,7 +801,8 @@ static bool mctl_phy_init(struct dram_para *para)
+ 			if (mctl_phy_read_calibration(para))
+ 				break;
+ 		if (i == 5) {
+-			debug("read calibration failed!\n");
++			printf("DRAM: read calibration failed! (0x184=0x%08x)\n",
++			       readl(SUNXI_DRAM_PHY0_BASE + 0x184));
+ 			return false;
+ 		}
+ 	}
+@@ -812,7 +812,9 @@ static bool mctl_phy_init(struct dram_para *para)
+ 			if (mctl_phy_read_training(para))
+ 				break;
+ 		if (i == 5) {
+-			debug("read training failed!\n");
++			printf("DRAM: read training failed! (0x840=0x%08x, 0xa40=0x%08x)\n",
++			       readl(SUNXI_DRAM_PHY0_BASE + 0x840),
++			       readl(SUNXI_DRAM_PHY0_BASE + 0xa40));
+ 			return false;
+ 		}
+ 	}
+@@ -822,7 +824,9 @@ static bool mctl_phy_init(struct dram_para *para)
+ 			if (mctl_phy_write_training(para))
+ 				break;
+ 		if (i == 5) {
+-			debug("write training failed!\n");
++			printf("DRAM: write training failed! (0x8e0=0x%08x, 0xae0=0x%08x)\n",
++			       readl(SUNXI_DRAM_PHY0_BASE + 0x8e0),
++			       readl(SUNXI_DRAM_PHY0_BASE + 0xae0));
+ 			return false;
+ 		}
+ 	}
+@@ -974,7 +978,7 @@ static void mctl_auto_detect_dram_size(struct dram_para *para)
+ 
+ 	for (para->rows = 13; para->rows < 18; para->rows++) {
+ 		/* 8 banks, 8 bit per byte and 16/32 bit width */
+-		if (mctl_mem_matches((1 << (para->rows + para->cols +
++		if (mctl_mem_matches((1ULL << (para->rows + para->cols +
+ 					    4 + para->bus_full_width))))
+ 			break;
+ 	}
+@@ -985,7 +989,7 @@ static void mctl_auto_detect_dram_size(struct dram_para *para)
+ 
+ 	for (para->cols = 8; para->cols < 11; para->cols++) {
+ 		/* 8 bits per byte and 16/32 bit width */
+-		if (mctl_mem_matches(1 << (para->cols + 1 +
++		if (mctl_mem_matches(1ULL << (para->cols + 1 +
+ 					   para->bus_full_width)))
+ 			break;
+ 	}
+@@ -1010,14 +1014,52 @@ unsigned long sunxi_dram_init(void)
+ 	setbits_le32(0x7010310, BIT(8));
+ 	clrbits_le32(0x7010318, 0x3f);
+ 
+-	mctl_auto_detect_rank_width(&para);
+-	mctl_auto_detect_dram_size(&para);
++	/*
++	 * Orange Pi Zero 2 2GB Hardware Mod (2x H5TC8G63AMR DDP):
++	 * Each chip contains 2x 4Gb dies (15 rows, 10 cols, 16-bit).
++	 * Together on 32-bit bus: 2 ranks, 15 rows, 10 cols, 32-bit = 2048 MB.
++	 */
++	para.cols = 10;
++	para.rows = 15;
++	para.bus_full_width = 1;
++	para.ranks = 2;
++
++	printf("DRAM: Initializing Dual-Rank 2048 MB (ranks=2, 32-bit, rows=15, cols=10)...\n");
++	if (!mctl_core_init(&para)) {
++		printf("DRAM: ERROR: mctl_core_init failed for ranks=2! Trying auto-detect fallback...\n");
++		mctl_auto_detect_rank_width(&para);
++		mctl_auto_detect_dram_size(&para);
++		mctl_core_init(&para);
++	}
++
++	writel(0x11111111, CONFIG_SYS_SDRAM_BASE);
++	writel(0x22222222, (ulong)CONFIG_SYS_SDRAM_BASE + 0x20000000);
++	writel(0x33333333, (ulong)CONFIG_SYS_SDRAM_BASE + 0x40000000);
++	writel(0x44444444, (ulong)CONFIG_SYS_SDRAM_BASE + 0x60000000);
++	dsb();
++	isb();
+ 
+-	mctl_core_init(&para);
++	u32 v0 = readl(CONFIG_SYS_SDRAM_BASE);
++	u32 v1 = readl((ulong)CONFIG_SYS_SDRAM_BASE + 0x20000000);
++	u32 v2 = readl((ulong)CONFIG_SYS_SDRAM_BASE + 0x40000000);
++	u32 v3 = readl((ulong)CONFIG_SYS_SDRAM_BASE + 0x60000000);
++
++	printf("DRAM test: [0M]=0x%08x [512M]=0x%08x [1024M]=0x%08x [1536M]=0x%08x\n",
++	       v0, v1, v2, v3);
++
++	if (v0 == 0x11111111 && v1 == 0x22222222 && v2 == 0x33333333 && v3 == 0x44444444) {
++		printf("DRAM: SUCCESS! Full 2048 MB dual-rank verified without aliasing!\n");
++	} else {
++		printf("DRAM: WARNING: memory test mismatch (v0=0x%08x, v1=0x%08x, v2=0x%08x, v3=0x%08x)\n",
++		       v0, v1, v2, v3);
++	}
+ 
+ 	size = mctl_calc_size(&para);
+ 
+ 	mctl_set_master_priority();
+ 
++	printf("DRAM: Initialized %lu MB (ranks=%d, %d-bit, rows=%d, cols=%d)\n",
++	       size >> 20, para.ranks, para.bus_full_width ? 32 : 16, para.rows, para.cols);
++
+ 	return size;
+ };
+diff --git a/configs/orangepi_zero2_defconfig b/configs/orangepi_zero2_defconfig
+index 02ac272b..97206475 100644
+--- a/configs/orangepi_zero2_defconfig
++++ b/configs/orangepi_zero2_defconfig
+@@ -14,3 +14,7 @@ CONFIG_SPL_I2C=y
+ CONFIG_PHY_REALTEK=y
+ CONFIG_SUN8I_EMAC=y
+ CONFIG_PWRLED="PC12"
++CONFIG_CMD_MEMTEST=y
++CONFIG_SYS_ALT_MEMTEST=y
++CONFIG_SYS_MEMTEST_START=0x40000000
++CONFIG_SYS_MEMTEST_END=0x60000000
