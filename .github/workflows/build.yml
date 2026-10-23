@@ -1,10 +1,12 @@
-name: Build Orange Pi Zero 2 (2GB RAM)
+name: Build & Release Orange Pi Zero 2 (2GB RAM)
 
 on:
   push:
     branches:
       - main
       - master
+    tags:
+      - 'v*'
     paths-ignore:
       - '**.md'
       - 'docs/**'
@@ -13,12 +15,16 @@ on:
       target:
         description: 'Build target'
         required: true
-        default: 'uboot'
+        default: 'all'
         type: choice
         options:
           - uboot
           - image
           - all
+      release_tag:
+        description: 'Optional tag name to publish a GitHub Release (e.g. v1.0.0)'
+        required: false
+        default: ''
       username:
         description: 'Default user name'
         required: false
@@ -27,6 +33,9 @@ on:
         description: 'Default user password'
         required: false
         default: 'ubuntu'
+
+permissions:
+  contents: write
 
 jobs:
   build-uboot:
@@ -48,42 +57,48 @@ jobs:
           chmod +x scripts/*.sh
           ./scripts/build_uboot.sh
 
-      - name: Check binary output
+      - name: Generate SHA256 checksum
         run: |
-          ls -lh u-boot-sunxi-with-spl.bin
-          sha256sum u-boot-sunxi-with-spl.bin
+          sha256sum u-boot-sunxi-with-spl.bin > u-boot-sunxi-with-spl.bin.sha256
+          ls -lh u-boot-sunxi-with-spl.bin*
+          cat u-boot-sunxi-with-spl.bin.sha256
 
       - name: Upload U-Boot Artifact
         uses: actions/upload-artifact@v4
         with:
           name: u-boot-sunxi-with-spl-2gb
-          path: u-boot-sunxi-with-spl.bin
+          path: |
+            u-boot-sunxi-with-spl.bin
+            u-boot-sunxi-with-spl.bin.sha256
           if-no-files-found: error
 
   build-image:
     name: Build Full OS Image (Ubuntu 22.04 + Linux 6.1)
     runs-on: ubuntu-22.04
-    if: "${{ github.event_name == 'workflow_dispatch' && (inputs.target == 'image' || inputs.target == 'all') }}"
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' && (inputs.target == 'image' || inputs.target == 'all'))
     steps:
-      - name: Free disk space on runner
+      - name: Free disk space & prepare loop devices on runner
         run: |
           sudo rm -rf /usr/share/dotnet
           sudo rm -rf /opt/ghc
           sudo rm -rf /usr/local/share/boost
           sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+          sudo modprobe loop max_loop=64 || true
           df -h
 
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up environment
+      - name: Configure user credentials
         run: |
           chmod +x scripts/*.sh
-          if [ -n "${{ inputs.username }}" ]; then
-            echo "DEFAULT_USERNAME=${{ inputs.username }}" >> .env
-            echo "DEFAULT_PASSWORD=${{ inputs.password }}" >> .env
-            echo "ROOT_PASSWORD=${{ inputs.password }}" >> .env
-          fi
+          USER_NAME="${{ inputs.username || 'ubuntu' }}"
+          USER_PASS="${{ inputs.password || 'ubuntu' }}"
+          echo "DEFAULT_USERNAME=${USER_NAME}" >> .env
+          echo "DEFAULT_PASSWORD=${USER_PASS}" >> .env
+          echo "ROOT_PASSWORD=${USER_PASS}" >> .env
 
       - name: Build Docker builder image
         run: |
@@ -93,16 +108,70 @@ jobs:
         run: |
           ./scripts/build_image.sh
 
-      - name: Compress image for release
+      - name: Compress image and generate SHA256
         run: |
           IMG_PATH=$(find orangepi-build/output/images/ -name "*.img" | head -n 1)
-          echo "Compressing ${IMG_PATH} with xz (multi-threaded)..."
-          xz -T0 -v -1 "${IMG_PATH}"
-          ls -lh orangepi-build/output/images/
+          mkdir -p release_image
+          OUT_IMG="release_image/Orangepizero2_2GB_ubuntu_jammy_server_linux6.1.31.img"
+          mv "${IMG_PATH}" "${OUT_IMG}"
+          echo "Compressing ${OUT_IMG} with xz (multi-threaded)..."
+          xz -T0 -v -2 "${OUT_IMG}"
+          cd release_image
+          sha256sum Orangepizero2_2GB_ubuntu_jammy_server_linux6.1.31.img.xz > Orangepizero2_2GB_ubuntu_jammy_server_linux6.1.31.img.xz.sha256
+          ls -lh
+          cat Orangepizero2_2GB_ubuntu_jammy_server_linux6.1.31.img.xz.sha256
 
       - name: Upload OS Image Artifact
         uses: actions/upload-artifact@v4
         with:
           name: orangepizero2-2gb-ubuntu-jammy-linux6.1
-          path: orangepi-build/output/images/*.img.xz
+          path: |
+            release_image/*.img.xz
+            release_image/*.img.xz.sha256
           if-no-files-found: error
+
+  publish-release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-22.04
+    needs:
+      - build-uboot
+      - build-image
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List release assets
+        run: ls -lh artifacts/
+
+      - name: Publish Release with Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
+          name: "Orange Pi Zero 2 (2GB Dual-Rank RAM) — ${{ inputs.release_tag || github.ref_name }}"
+          generate_release_notes: true
+          body: |
+            ### Orange Pi Zero 2 (2GB Dual-Rank DDR3L) Firmware Release
+            - **Bootloader**: `u-boot-sunxi-with-spl.bin` (U-Boot `v2021.10-sunxi` patched for 2GB Dual-Rank `H5TC8G63AMR` / DDP 8Gb x16 chips: `ranks=2, rows=15, cols=10, 32-bit`)
+            - **OS Image**: `Orangepizero2_2GB_ubuntu_jammy_server_linux6.1.31.img.xz` (Ubuntu 22.04 LTS Server, Linux 6.1.31, headless with full Wi-Fi/BT CLI stack)
+            - **Default Credentials**: `ubuntu` / `ubuntu` (`root`: `ubuntu`)
+
+            #### Flashing Instructions
+            **Full OS Image:**
+            ```bash
+            xz -dc Orangepizero2_2GB_ubuntu_jammy_server_linux6.1.31.img.xz | sudo dd of=/dev/sdX bs=4M status=progress conv=fsync
+            ```
+            **Bootloader Only (onto an existing SD card):**
+            ```bash
+            sudo dd if=u-boot-sunxi-with-spl.bin of=/dev/sdX bs=1k seek=8 conv=fsync
+            ```
+          files: |
+            artifacts/u-boot-sunxi-with-spl.bin
+            artifacts/u-boot-sunxi-with-spl.bin.sha256
+            artifacts/Orangepizero2_2GB_ubuntu_jammy_server_linux6.1.31.img.xz
+            artifacts/Orangepizero2_2GB_ubuntu_jammy_server_linux6.1.31.img.xz.sha256

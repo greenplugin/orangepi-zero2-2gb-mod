@@ -111,11 +111,16 @@ sudo dd if=output/Orangepizero2_2GB_ubuntu_jammy_server_linux6.1.31.img of=/dev/
 
 ---
 
-## 5. GitHub Actions CI/CD
+## 5. GitHub Actions CI/CD & Automated Releases
 
-The workflow in [`.github/workflows/build.yml`](.github/workflows/build.yml) provides automated cloud builds:
-* **On Push (`main`/`master`)**: Compiles `u-boot-sunxi-with-spl.bin` and uploads it as a workflow artifact.
-* **On Manual Dispatch (`workflow_dispatch`)**: Allows selecting the build target (`uboot`, `image`, or `all`) and custom user credentials, producing a compressed `.img.xz` OS image artifact.
+The workflow in [`.github/workflows/build.yml`](.github/workflows/build.yml) provides automated cloud builds and release publishing:
+* **On Push (`main`/`master`)**: Compiles `u-boot-sunxi-with-spl.bin` (+ `.sha256`) and uploads it as a workflow artifact.
+* **On Version Tag Push (`v*`, e.g., `v1.0.0`)**: Automatically builds **both** `u-boot-sunxi-with-spl.bin` and the full Ubuntu 22.04 + Linux 6.1 LTS image (`Orangepizero2_2GB_ubuntu_jammy_server_linux6.1.31.img.xz` + `.sha256`), creates a **GitHub Release**, and attaches all binaries directly to the Release page:
+  ```bash
+  git tag v1.0.0
+  git push origin v1.0.0
+  ```
+* **On Manual Dispatch (`workflow_dispatch`)**: Allows selecting the build target (`uboot`, `image`, or `all`), custom user credentials, and an optional `release_tag` to publish a GitHub Release directly from the Actions UI.
 
 ---
 
