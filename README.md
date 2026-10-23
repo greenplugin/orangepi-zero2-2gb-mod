@@ -9,7 +9,7 @@ U-Boot DRAM PHY patches and a reproducible Docker build environment for running 
 
 > [!CAUTION]
 > **Disclaimer — Proceed at Your Own Risk**
-> This repository documents a personal hardware/software modification and is provided strictly for educational purposes. It is **not** a call to action. Upgrading BGA memory requires proper SMD/BGA rework equipment and soldering skills. **Note that the PCB solder mask on this board proved to be quite delicate**, so desoldering, pad cleanup with solder wick, and hot-air rework must be performed very gently and carefully to avoid scratching the mask or lifting pads. **Everything you do is entirely at your own risk** — the author bears no responsibility for damaged PCBs, lifted pads, overheated SoCs/DRAM, or bricked devices.
+> This repository documents a personal hardware/software modification and is provided strictly for educational purposes. It is **not** a call to action. Upgrading BGA memory requires proper SMD/BGA rework equipment and soldering skills. **Note that the PCB solder mask on my board proved to be quite delicate.** **Everything you do is entirely at your own risk** — the author bears no responsibility for damaged PCBs, lifted pads, overheated SoCs/DRAM, or bricked devices.
 
 ![Orange Pi Zero 2 v1.3 upgraded to 2GB RAM with SK Hynix H5TC8G63AMR-PBA chips](assets/orangepi-zero2-v1.3-2gb-mod.jpg)
 *Orange Pi Zero 2 (PCB rev v1.3) upgraded to 2 GB RAM with two SK Hynix `H5TC8G63AMR-PBA` Dual-Rank DDR3L chips alongside the original desoldered chips.*
@@ -23,7 +23,7 @@ The **Orange Pi Zero 2** ships from the factory with either **512 MB** (2× 2Gb)
 Upgrading the board to **2 GB (2048 MB)** requires replacing both chips with **8Gb (512M × 16) FBGA-96 DDR3/DDR3L** modules. This modification was performed and verified on **PCB revision v1.3**. When using **Dual-Rank (Dual-Die Package / DDP)** 8Gb chips, two technical requirements must be met:
 
 1. **Hardware (PCB Routing)**: Each DDP package internally stacks two independent 4Gb (256M × 16) dies (`15 rows A0–A14`, `10 columns A0–A9`, `8 banks`). Die 0 is controlled via Rank 0 signals (`CS0#`, `CKE0`, `ODT0`, `ZQ0`) and Die 1 via Rank 1 signals (`CS1#`, `CKE1`, `ODT1`, `ZQ1`).
-   * The **Orange Pi Zero 2 PCB** (tested on **v1.3**, also confirmed in the official **v1.5** schematic) routes all Dual-Rank signals from the Allwinner H616 SoC to both `UD1` and `UD2`: `SCS0`/`SCS1` (balls `L2`/`L1`), `SCKE0`/`SCKE1` (balls `K9`/`J9`), `SODT0`/`SODT1` (balls `K1`/`J1`), and populates all four 240Ω 1% `ZQ` calibration resistors (`RD1–RD4` on balls `L8`/`L9`).
+   * The **Orange Pi Zero 2 PCB** (tested on **v1.3**, also confirmed in the official **v1.5** schematic) routes all Dual-Rank control signals from the Allwinner H616 SoC to both `UD1` and `UD2`: `SCS0`/`SCS1` (balls `L2`/`L1`), `SCKE0`/`SCKE1` (balls `K9`/`J9`), `SODT0`/`SODT1` (balls `K1`/`J1`), and `ZQ` calibration resistors (`RD13`/`RD7` on `L8`, with footprints `RD12`/`RD14` on `L9`).
    * The PMIC (`AXP305`) supplies `1.5V` on `VCC-DRAM` (`dcdcd`), so `1.35V` DDR3L chips must be backward-compatible with `1.5V` operation (standard per JEDEC DDR3L spec).
 
 2. **Bootloader (Allwinner H616 U-Boot DRAM PHY Driver)**:
